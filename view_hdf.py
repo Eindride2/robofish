@@ -7,6 +7,9 @@ import shapely
 from descartes.patch import PolygonPatch
 from figures import BLUE, RED, BLACK, YELLOW, SIZE, set_limits, plot_coords, color_isvalid
 from time import perf_counter
+from torch.utils.data import Dataset, DataLoader
+from hyper_params import *
+import os
 
 
 # Whole code is inspired by Moritz Maxeiners master thesis and his code for the thesis
@@ -21,7 +24,15 @@ def vec_to_angle(x, y):
     else:
         return -acos(x)
 
+
 max_dist = 70
+
+
+def ang_diff(source, target):
+    a = target - source
+    a = a - 2 * pi if a > pi else (a + 2 * pi if a < -pi else a)
+    return a
+
 
 # map distance to value in range(0,1) - greater distance -> lesser intensity (from Moritz Maxeiner)
 def intensity_linear(distance):
@@ -29,9 +40,10 @@ def intensity_linear(distance):
         return 0
     return 1 - float(distance) / max_dist
 
-# calculate alignment measure in range(0,1), 1 => same direction, 0 => opposite direction
+
 def intensity_angular(ang_diff):
-    return 1 - float(ang_diff)/pi
+    return 1 - float(ang_diff) / pi
+
 
 def addCorner(p1, p2):
     x = p2[0] if 0 < p1[0] < 100 else p1[0]
@@ -50,14 +62,20 @@ def dot_product(vec1, vec2):
     return akk
 
 
-def get_locomotion_vec(data_prev, data_cur):
-    if data_prev is None:
-        return 0, 0
+def get_locomotion_vec(data_prev, data_cur, filepath):
+    if filepath == None:
+
+        #TODO: same as below but for model.predict
+
     else:
-        ang_turn = vec_to_angle(data_prev[2], data_prev[3]) - vec_to_angle(data_cur[2], data_cur[3])
-        diff_vec = ((data_cur[0] - data_prev[0]), (data_cur[1] - data_prev[1]))
-        linear_speed = dot_product(diff_vec, (data_cur[2], data_cur[3]))
-        return ang_turn, linear_speed
+        if data_prev is None:
+            return 0, 0
+        else:
+            # ang_turn = vec_to_angle(data_prev[2], data_prev[3]) - vec_to_angle(data_cur[2], data_cur[3])
+            ang_turn = ang_diff(vec_to_angle(data_prev[2], data_prev[3]), vec_to_angle(data_cur[2], data_cur[3]))
+            diff_vec = ((data_cur[0] - data_prev[0]), (data_cur[1] - data_prev[1]))
+            linear_speed = dot_product(diff_vec, (data_cur[2], data_cur[3]))
+    return ang_turn, linear_speed
 
 
 def dist_travelled(data_prev, data_cur):
@@ -79,18 +97,31 @@ def ray_intersection(x, a):
     # lambda * cos(a) + x1 = mu * w1 + b1
     # lambda * sin(a) + x2 = mu * w2 + b2
     # x = (x.x, x.y)
+    c = cos(a)
+    s = sin(a)
+    # if we have a case where cos or sin are close to 0, we can immediately return some value
+    if abs(c) < 0.0001:
+        # print('edge case: angle almost 90 or 270')
+        if a > 0:
+            return x[0], 100
+        else:
+            return x[0], 0
+    elif abs(a) < 0.0001:
+        # print('edge case: angle very small')
+        return 100, x[1]
+    elif abs(abs(a) - pi) < 0.0001:
+        # print('edge case: angle almost 180')
+        return 0, x[1]
+
+    # else we iterate through the lines which represent the tank walls
+    # and search the intersection point with the line given by position and orientation-angle of the agent
     for w, b in tank_walls:
-        c = cos(a)
-        s = sin(a)
         lambd = 0
         if w[0] == 0:
-            if abs(c) < 0.000001:
-                continue
             lambd = (b[0] - x[0]) / c
         elif w[1] == 0:
-            if abs(s) < 0.000001:
-                continue
             lambd = (b[1] - x[1]) / s
+
         if lambd >= 0:
             inters = round(lambd * c + x[0], 6), round(lambd * s + x[1], 6)
             if is_in_tank(inters[0], inters[1]):
@@ -99,27 +130,55 @@ def ray_intersection(x, a):
     return -1, -1
 
 
+def get_bin(value, min, max, num_bins):
+    step = (max - min) / num_bins
+    # res = np.zeros(num_bins)
+    for i in range(num_bins):
+        if min + i * step <= value < min + (i + 1) * step:
+            # the loss function just wants the index of the correct class
+            return i
+    if value < min:
+        return 0
+    elif value > max:
+        return num_bins - 1
+    else:
+        return print("ERROR no bin found")
+
+
+# def one_hot_wrap(arr):
+#    # take one hot of the first to values of the array and return these class numbers as an array
+#    angle_label = get_bin(arr[0], -0.04, 0.04, angle_bins)
+#    speed_label = get_bin(arr[1], 0.0, 0.4, speed_bins)
+#    return numpy.array([angle_label, speed_label])
+
 # thats the main class, its run method will do all the work
 class Guppy_Calculator():
-    def __init__(self, filepath, agent, num_bins, num_rays, livedata, simulation=False):
-        # set up data
+    def __init__(self, filepath, agent, pos_data, num_guppy_bins, num_wall_rays, livedata, simulation=False):
+        # added pos_data argument
 
         self.filepath = filepath
-        with h5py.File(filepath, "r") as hdf_file:
-            self.ls = list(hdf_file.keys())
-            if not livedata:
-                self.data = [numpy.array(hdf_file.get("{}".format(i))) for i in range(len(self.ls))]
-            else:
-                self.data = [numpy.array(hdf_file.get("{}".format(i + 1))) for i in range(len(self.ls))]
-            self.agent = agent
-            self.agent_data = self.data[agent]
+        # set up data
+
+        if self.filepath == None:
+            self.agent_data = pos_data
+
+        else:
+            with h5py.File(filepath, "r") as hdf_file:
+                self.ls = list(hdf_file.keys())
+                if not livedata:
+                    self.data = [numpy.array(hdf_file.get("{}".format(i))) for i in range(len(self.ls))]
+                else:
+                    self.data = [numpy.array(hdf_file.get("{}".format(i + 1))) for i in range(len(self.ls))]
+                self.agent = agent
+                self.agent_data = self.data[agent]
 
         self.length = len(self.agent_data)
-
-        self.num_bins = num_bins
-        self.num_rays = num_rays
+        self.num_bins = num_guppy_bins
+        self.num_rays = num_wall_rays
         self.bin_angles = [pi * (i / self.num_bins) - pi / 2 for i in range(0, self.num_bins + 1)]
         self.wall_angles = [pi * (i / self.num_rays) - pi / 2 for i in range(0, self.num_rays)]
+        self.simulation = simulation
+
         if simulation:
             self.fig, self.ax = pyplot.subplots()
             self.ax.set_title('tank')
@@ -132,17 +191,23 @@ class Guppy_Calculator():
         self.obs_ori = None
         self.obs_angle = None
         self.others = None
-        self.others_ori = None #added
-        self.others_angle = None #added
         self.loc_vec = None
 
-    def get_data_from_file(self, include_alignment_data):
-        #input = numpy.zeros((len(self.agent_data), 2 + self.num_bins + self.num_rays))
-        input = []
-        for i in range(len(self.agent_data)):
-        #    input[i] = self.craft_vector(i)
-            input.append( self.craft_vector(i, include_alignment_data))
-        return numpy.array(input)
+    def get_data(self):
+        sensory = []
+        loc = []
+
+        if self.filepath == None:            #test prediction
+            for i in range(len(self.agent_data)): #size of mini-batch
+                loc.append(self.get_loc_vec(i))
+                sensory.append(self.craft_vector(i))
+            return numpy.array(loc), numpy.array(sensory)
+
+        else:
+            for i in range(1, len(self.agent_data)):
+                loc.append(self.get_loc_vec(i))
+                sensory.append(self.craft_vector(i))
+        return numpy.array(loc), numpy.array(sensory)
 
     def preprocess(self):
         new_path = self.filepath + ".npy"
@@ -158,7 +223,7 @@ class Guppy_Calculator():
         # for i in numpy.load(new_path):
         #    print(i)
 
-    def craft_vector(self, i, include_alignment_data):
+    def craft_vector(self, i):
         """calculate the vector v = (locomotion, agent_view, wall_view) from the raw data"""
         # get position of guppy 0 and convert it to sympy point
         self.obs_pos = (self.agent_data[i][0], self.agent_data[i][1])
@@ -169,30 +234,33 @@ class Guppy_Calculator():
         # calculate positions of other guppys
         self.others = [(self.data[j][i][0], self.data[j][i][1])
                        for j in range(len(self.ls)) if j != self.agent]
-
-        #ADDED get orientation vector and calculate angle of other guppies
-        self.others_ori = [(self.data[j][i][2], self.data[j][i][3])
-                       for j in range(len(self.ls)) if j != self.agent]
-
         self.others_angle = [vec_to_angle(self.data[j][i][2], self.data[j][i][3])
-                       for j in range(len(self.ls)) if j != self.agent]
-        #print(self.others_angle)
-
+                             for j in range(len(self.ls)) if j != self.agent]
         # calculate intensity vector wall_view for distance to walls
         self.wall_distances()
         # calculate intensity vector agent_view for distance to nearby guppies
-        # ADDED: calculate intensity vector for alignment of nearby guppies in guppy_distances()
         self.guppy_distances()
-
         # loc_vec[0] = angular turn; loc_vec[1] = linear speed
-        self.loc_vec = get_locomotion_vec(self.agent_data[i - 1], self.agent_data[i])
+        if self.simulation:
+            self.loc_vec = get_locomotion_vec(self.agent_data[i - 1], self.agent_data[i])
+
         # we return the vector already concatenated in a numpy_vector
+        if include_others_angles:
+            return numpy.concatenate((numpy.array(self.agent_view),
+                                      numpy.array(self.wall_view),
+                                      numpy.array(self.agent_view_angle)))
+        else:
+            return numpy.concatenate((numpy.array(self.agent_view),
+                                      numpy.array(self.wall_view)))
 
-        data_vector = numpy.concatenate((numpy.array(self.loc_vec), numpy.array(self.agent_view), numpy.array(self.wall_view)))
-
-        if include_alignment_data:
-           data_vector = numpy.concatenate((numpy.array(self.loc_vec), numpy.array(self.agent_view), numpy.array(self.wall_view), numpy.array(self.agent_view_angle)))
-        return data_vector
+    def get_loc_vec(self, i):
+        if self.filepath == None:
+            loc_vec = numpy.array(get_locomotion_vec(self.agent_data[i,:,0], self.agent_data[i,:,1]
+                                                     , self.filepath))
+        else:
+            loc_vec = numpy.array(get_locomotion_vec(self.agent_data[i - 1], self.agent_data[i]
+                                                     , self.filepath))
+        return loc_vec
 
     def run_sim(self, step):
         for frame in range(1, len(self.agent_data), step):
@@ -221,9 +289,7 @@ class Guppy_Calculator():
 
         # loop through the bins and find the closest guppy for each bin
         self.agent_view = [1000.0 for i in range(len(self.bins))]
-        # vector of alignment intensity values. returns 0 for empty bins
         self.agent_view_angle = [0 for i in range(len(self.bins))]
-
         length = len(self.others)
         others_c = self.others[:]
         others_ang = self.others_angle[:]
@@ -237,22 +303,17 @@ class Guppy_Calculator():
                     distance = dist(self.obs_pos, others_c[j])
                     if distance < self.agent_view[i]:
                         self.agent_view[i] = distance
-
-                        #ADDED: calculate difference in orientation angle between self and visible fish
-
-                        ang_diff = abs(self.obs_angle - others_ang[j])
-                        if ang_diff > pi:
-                            ang_diff = 2 * pi - ang_diff
-                        self.agent_view_angle[i] = intensity_angular(ang_diff)
-
-                    del(others_ang[j])
+                        ang_dif = abs(self.obs_angle - others_ang[j])
+                        if ang_dif > pi:
+                            ang_dif = 2 * pi - ang_dif
+                        self.agent_view_angle[i] = intensity_angular(ang_dif)
                     del (others_c[j])
+                    del (others_ang[j])
                     length -= 1
                 else:
                     j += 1
 
             self.agent_view[i] = intensity_linear(self.agent_view[i])
-
         # agent_view vector is ready now
 
         """
@@ -277,7 +338,6 @@ class Guppy_Calculator():
         for i in range(len(self.agent_view)):
             self.agent_view[i] = intensity_linear(self.agent_view[i], max_dist)
         """
-
 
     def plot_guppy_bins(self):
         self.ax.cla()  # clear axes
@@ -335,10 +395,66 @@ class Guppy_Calculator():
         pyplot.pause(0.00000000001)
 
 
+class Guppy_Dataset(Dataset):
+
+    def __init__(self, filepaths, agent, pos_data, num_bins, num_rays, livedata, output_model):
+        self.pos_data = pos_data
+        self.livedata = livedata
+        self.num_rays = num_rays
+        self.num_view_bins = num_bins
+        self.agent = agent
+        self.filepaths = filepaths
+        self.data = []
+        self.datapaths = []
+        self.labelpaths = []
+
+        if self.filepaths == None:  #getting sensory input for prediction function in model_test
+            gc = Guppy_Calculator(None, self.agent, self.pos_data, self.num_view_bins, self.num_rays, self.livedata)
+            x_loc, x_sensory = gc.get_data()
+
+            y_loc = numpy.roll(x_loc, -1, 0)
+            if output_model == ("multi_modal"):
+                for i in range(y_loc.shape[0]):
+                    y_loc[i, 0] = get_bin(y_loc[i, 0], angle_min, angle_max, num_angle_bins)
+                    y_loc[i, 1] = get_bin(y_loc[i, 1], speed_min, speed_max, num_speed_bins)
+
+        else:
+            self.length = len(filepaths)
+            for i in range(self.length):
+                datapath = self.filepaths[i]
+                datapath += "data.multi_modal.npy" if output_model == "multi_modal" else "data.fixed.npy"
+                labelpath = self.filepaths[i]
+                labelpath += "label.multi_modal.npy" if output_model == "multi_modal" else "label.fixed.npy"
+                if not os.path.isfile(datapath):
+                    gc = Guppy_Calculator(self.filepaths[i], self.agent, self.num_view_bins, self.num_rays, self.livedata)
+                    x_loc, x_sensory = gc.get_data()
+                    y_loc = numpy.roll(x_loc, -1, 0)
+                    if output_model == ("multi_modal"):
+                        for i in range(y_loc.shape[0]):
+                            y_loc[i, 0] = get_bin(y_loc[i, 0], angle_min, angle_max, num_angle_bins)
+                            y_loc[i, 1] = get_bin(y_loc[i, 1], speed_min, speed_max, num_speed_bins)
+
+                    numpy.save(datapath, numpy.concatenate((x_loc[:-1, :], x_sensory[:-1, :]), 1))
+                    numpy.save(labelpath, y_loc[:-1, :])
+                self.datapaths.append(datapath)
+                self.labelpaths.append(labelpath)
+
+        #    self.data.append((numpy.concatenate((x_loc[:-1, :], x_sensory[:-1, :]), 1), y_loc[:-1, :]))
+
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, i):
+        data = numpy.load(self.datapaths[i])
+        labels = numpy.load(self.labelpaths[i])
+        return data, labels
+
+        # return self.data[i]
+
+
 if __name__ == "__main__":
     filepath = "guppy_data/couzin_torus/train/8_0002.hdf5"
-    filepathlive = "guppy_data/live_female_female/train/CameraCapture2019-05-03T11_22_33_8108-sub_0.hdf5"
-    gc = Guppy_Calculator(filepath, agent=0, num_bins=7, num_rays=5, livedata=False)
-    #gc.preprocess()
-    # print("Example: Handcrafted vector for frame 100:\n", gc.craft_vector(100))
+    filepathlive = "guppy_data/live_female_female/train/CameraCapture2019-06-20T15_35_23_672-sub_1.hdf5"
+    gc = Guppy_Calculator(filepathlive, agent=0, num_guppy_bins=20, num_wall_rays=5, livedata=True, simulation=True)
     gc.run_sim(step=1)
