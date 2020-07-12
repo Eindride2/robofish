@@ -161,7 +161,7 @@ class Guppy_Calculator():
     def network_simulation(self):
         # load model
         torch.set_default_dtype(torch.float64)
-        path = "guppy_net_live_multi_modal_hidden400_layers1_gbins20_wbins20.pth" #network_path
+        path = "guppy_net_live_multi_modal_hidden100_layers3_gbins60_wbins60.pth" #network_path
         state_dict = torch.load(path)
         hidden_layer_size = state_dict["lstm.weight_hh_l0"][1]
         model = LSTM_multi_modal() if output_model == "multi_modal" else LSTM_fixed()
@@ -169,7 +169,10 @@ class Guppy_Calculator():
         model.eval()
 
         # init hidden
-        hidden_state = [model.init_hidden(1, num_layers) for agent in range(self.num_guppys)]
+        #hidden_state = [model.init_hidden(1, num_layers) for agent in range(self.num_guppys)]
+        states = [[model.init_hidden(1, 1, hidden_layer_size)
+                  for _ in range(num_layers * 2)]
+                  for _ in range(self.num_guppys)]
         for i in range(1, len(self.agent_data) - 1):
             for agent in range(self.num_guppys):
                 with torch.no_grad():
@@ -179,7 +182,8 @@ class Guppy_Calculator():
                     data = data.view(1, 1, -1)
 
                     # predict the new ang_turn, lin_speed
-                    out, hidden_state[agent] = model.predict(data, hidden_state[agent])
+                    #out, hidden_state[agent] = model.predict(data, hidden_state[agent])
+                    out, states[agent] = model.predict(data, states[agent])
                     ang_turn = out[0].item() if output_model == "multi_modal" else out[0][0][0].item()
                     lin_speed = out[1].item() if output_model == "multi_modal" else out[0][0][1].item()
 
@@ -379,10 +383,10 @@ class Guppy_Dataset(Dataset):
         for i in range(len(filepaths)):
             datapath = self.filepaths[i]
             labelpath = self.filepaths[i]
-            datapath += "data.{}".format(output_model)
-            labelpath += "label.{}".format(output_model)
-            #datapath += "_data_{}_gbins{}_wbins{}_view{}".format(output_model, num_bins, num_rays, agent_view_field)
-            #labelpath += "_label_{}_gbins{}_wbins{}_view{}".format(output_model, num_bins, num_rays, agent_view_field)
+            #datapath += "data.{}".format(output_model)
+            #labelpath += "label.{}".format(output_model)
+            datapath += f"_data_{output_model}_gbins{num_bins}_wbins{num_rays}_view{agent_view_field}"
+            labelpath += f"_label_{output_model}_gbins{num_bins}_wbins{num_rays}_view{agent_view_field}"
             gc = Guppy_Calculator(self.filepaths[i], self.agent, self.num_view_bins, self.num_rays, self.livedata)
             self.length += gc.num_guppys
             # get processed data from the perspective of guppy of a file
@@ -390,6 +394,8 @@ class Guppy_Dataset(Dataset):
                 final_data_path = datapath + "ag" + str(agent) + ".npy"
                 final_label_path = labelpath + "ag" + str(agent) + ".npy"
                 if not os.path.isfile(final_data_path):
+                    print("creating ", final_data_path)
+                    print("creating ", final_label_path)
                     x_loc, x_sensory = gc.get_data(agent)
                     y_loc = numpy.roll(x_loc, -1, 0)
                     if output_model == ("multi_modal"):
