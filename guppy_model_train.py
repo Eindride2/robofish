@@ -42,11 +42,20 @@ print(model)
 
 dataset = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
 dataloader = DataLoader(dataset, batch_size=batch_size, drop_last=True, shuffle=True)
+testdata = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
+testloader = DataLoader(testdata, batch_size=batch_size, drop_last=True, shuffle=True)
 
 epochs = 20
+train_losses = []
+val_losses = []
+
 for i in range(epochs):
     #h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
     states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
+
+    loss = 0
+    val_loss = 0
+
     for inputs, targets in dataloader:
         try:
             # Creating new variables for the hidden state, otherwise
@@ -68,21 +77,47 @@ for i in range(epochs):
 
                 loss1 = loss_function(angle_pred, angle_targets)
                 loss2 = loss_function(speed_pred, speed_targets)
-                loss = loss1 + loss2
+                loss += loss1 + loss2
 
             else:
                 prediction, h = model.forward(inputs, h)
-                loss = loss_function(prediction, targets)
+                loss += loss_function(prediction, targets)
 
         except KeyboardInterrupt:
             if input("Do you want to save the model trained so far? y/n") == "y":
                 torch.save(model.state_dict(), network_path + f".epochs{i}")
             sys.exit(0)
 
-        loss.backward()
-        optimizer.step()
-
+    loss = loss / dataset.length
+    train_losses.append(loss)
+    loss.backward()
+    optimizer.step()
     print(f'epoch: {i:3} loss: {loss.item():10.10f}')
+
+    #validation
+    model.eval()
+    for inputs, targets in testloader:
+
+        if output_model == "multi_modal":
+            angle_pred, speed_pred = model.predict(inputs,h)
+
+            angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
+            speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
+            targets = targets.view(targets.shape[0] * targets.shape[1], 2)
+            angle_targets = targets[:, 0]
+            speed_targets = targets[:, 1]
+
+            loss1 = loss_function(angle_pred, angle_targets)
+            loss2 = loss_function(speed_pred, speed_targets)
+            val_loss += loss1 + loss2
+
+        else:
+            prediction = model.predict(inputs, h)
+            val_loss += loss_function(prediction, targets)
+
+    val_loss = val_loss / testdata.length
+    val_losses.append(val_loss)
+    print(f'epoch: {i:3} validation loss: {val_loss.item():10.10f}')
 
 torch.save(model.state_dict(), network_path + f".epochs{i}")
 
