@@ -116,6 +116,7 @@ for i in range(epochs):
         if output_model == "multi_modal":
 
             targets = targets.type(torch.LongTensor)
+            inputs = inputs.type(torch.LongTensor)
             angle_pred, speed_pred = model.predict(inputs,h)
 
             angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
