@@ -3,6 +3,8 @@ from math import pi
 include_others_angles = True
 live_data = False
 
+epochs = 20
+
 agent_view_field = round(pi + pi / 2, 2)
 far_plane = 140
 num_guppy_bins = 60
@@ -10,7 +12,6 @@ num_wall_rays = 60
 input_dim = num_guppy_bins + num_wall_rays + 2
 input_dim += num_guppy_bins if include_others_angles else 0
 agent = 0
-
 
 # for multimodal
 num_angle_bins = 80

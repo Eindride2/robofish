@@ -13,15 +13,20 @@ from guppy_model import LSTM_fixed, LSTM_multi_modal
 import sys
 import copy
 from hyper_params import *
+import pickle
 
 torch.manual_seed(1)
 
 # get the files for 4, 6 and 8 guppys
 trainpath = "guppy_data/live_female_female/train/" if live_data else "guppy_data/couzin_torus/train/"
+testpath = "guppy_data/live_female_female/test/" if live_data else "guppy_data/couzin_torus/test/"
 files = [join(trainpath, f) for f in listdir(trainpath) if isfile(join(trainpath, f)) and f.endswith(".hdf5") ]
+test_files = [join(testpath, f) for f in listdir(testpath) if isfile(join(testpath, f)) and f.endswith(".hdf5") ]
 files.sort()
+test_files.sort
 num_files = len(files) // 8
-files = files[-18:]
+files = files[97:] #all files with > 1 fish
+test_files = test_files[10:] #dito
 print(files)
 
 torch.set_default_dtype(torch.float64)
@@ -40,12 +45,14 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 print(model)
 # training
 
+files=files[0:1]
+test_files=test_files[0:1]
+
 dataset = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
 dataloader = DataLoader(dataset, batch_size=batch_size, drop_last=True, shuffle=True)
-testdata = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
+testdata = Guppy_Dataset(test_files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
 testloader = DataLoader(testdata, batch_size=batch_size, drop_last=True, shuffle=True)
 
-epochs = 20
 train_losses = []
 val_losses = []
 
@@ -55,7 +62,7 @@ for i in range(epochs):
     try:
         h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
         states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
-        loss = 0
+
         for inputs, targets in dataloader:
             # Creating new variables for the hidden state, otherwise
             # we'd backprop through the entire training history
@@ -104,10 +111,11 @@ for i in range(epochs):
             sys.exit(0)
 
     loss = loss / dataset.length
-    train_losses.append(loss)
     loss.backward()
     optimizer.step()
-    print(f'epoch: {i:3} loss: {loss.item():10.10f}')
+    train_losses.append(loss.detach().numpy())
+
+    print(f'epoch: {i:3} training loss: {loss.item():10.10f}')
 
     #validation
     model.eval()
@@ -116,7 +124,7 @@ for i in range(epochs):
         if output_model == "multi_modal":
 
             targets = targets.type(torch.LongTensor)
-            angle_pred, speed_pred = model.predict(inputs,h)
+            angle_pred, speed_pred,_ = model.forward(inputs,states)
 
             angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
             speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
@@ -129,14 +137,17 @@ for i in range(epochs):
             val_loss += loss1 + loss2
 
         else:
-            prediction = model.predict(inputs, h)
+            prediction,_ = model.forward(inputs, h)
             val_loss += loss_function(prediction, targets)
 
     val_loss = val_loss / testdata.length
-    val_losses.append(val_loss)
-    print(f'epoch: {i:3} validation loss: {val_loss.item():10.10f}')
+    val_losses.append(val_loss.detach().numpy())
+    print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
     #torch.save(model.state_dict(), network_path + f".epochs{i}")
 
+
+with open('loss_scores', 'wb') as f:
+    pickle.dump([train_losses,val_losses], f)
 torch.save(model.state_dict(), network_path + f".epochs{epochs}")
 print("network saved at " + network_path + f".epochs{epochs}")
 
