@@ -10,6 +10,7 @@ from os import listdir
 from os.path import isfile, join
 from torch.utils.data import Dataset, DataLoader
 from guppy_model import LSTM_fixed, LSTM_multi_modal
+from evaluate_performance import plot_scores
 import sys
 import copy
 from hyper_params import *
@@ -24,10 +25,12 @@ files = [join(trainpath, f) for f in listdir(trainpath) if isfile(join(trainpath
 test_files = [join(testpath, f) for f in listdir(testpath) if isfile(join(testpath, f)) and f.endswith(".hdf5") ]
 files.sort()
 test_files.sort
-num_files = len(files) // 8
+num_files = len(files)
 files = files[97:] #all files with > 1 fish
-test_files = test_files[10:] #dito
-print(files)
+test_files = test_files[10:] #ditto
+
+files = files[0:1]
+test_files = test_files[0:1]
 
 torch.set_default_dtype(torch.float64)
 
@@ -45,9 +48,6 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 print(model)
 # training
 
-files=files[0:1]
-test_files=test_files[0:1]
-
 dataset = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
 dataloader = DataLoader(dataset, batch_size=batch_size, drop_last=True, shuffle=True)
 testdata = Guppy_Dataset(test_files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
@@ -55,13 +55,18 @@ testloader = DataLoader(testdata, batch_size=batch_size, drop_last=True, shuffle
 
 train_losses = []
 val_losses = []
+#confidences = []
+confidence_turn = []
+confidence_speed = []
 
 for i in range(epochs):
-    loss = 0
-    val_loss = 0
+
     try:
         h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
         states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
+        loss = 0
+        val_loss = 0
+        confidence = conf1 = conf2 = conf_turn = conf_speed = 0
 
         for inputs, targets in dataloader:
             # Creating new variables for the hidden state, otherwise
@@ -74,6 +79,7 @@ for i in range(epochs):
                 targets = targets.type(torch.LongTensor)
                # angle_pred, speed_pred, h = model.forward(inputs, h)
                 angle_pred, speed_pred, states = model.forward(inputs, states)
+                print(angle_bins)
                 #print(angle_pred.size())
                 #print(speed_pred.size())
 
@@ -97,6 +103,14 @@ for i in range(epochs):
                 #     print("------SPEED TARGETS -------")
                 #     print(speed_targets)
 
+                for x in range(len(angle_pred)):
+                    conf1 += model.confidence(nn.Softmax(0)(angle_pred[x]))
+                    conf2 += model.confidence(nn.Softmax(0)(speed_pred[x]))
+                #confidence = (conf1 + conf2 ) / 2
+                conf_turn += conf1
+                conf_speed += conf2
+                conf1 = conf2 = 0
+
                 loss1 = loss_function(angle_pred, angle_targets)
                 loss2 = loss_function(speed_pred, speed_targets)
                 loss += loss1 + loss2
@@ -105,18 +119,28 @@ for i in range(epochs):
                 prediction, h = model.forward(inputs, h)
                 loss += loss_function(prediction, targets)
 
+        timesteps = len(angle_pred) / batch_size
+
     except KeyboardInterrupt:
             if input("Do you want to save the model trained so far? y/n") == "y":
                 torch.save(model.state_dict(), network_path + f".epochs{i}")
             sys.exit(0)
 
+    #confidence = float(confidence / (timesteps * dataset.length))
+    # confidences.append(confidence)
+    conf_turn = float(conf_turn / (timesteps * dataset.length))
+    conf_speed = float(conf_speed / (timesteps * dataset.length))
+    confidence_turn.append(conf_turn)
+    confidence_speed.append(conf_speed)
     loss = loss / dataset.length
     loss.backward()
     optimizer.step()
     train_losses.append(loss.detach().numpy())
 
     print(f'epoch: {i:3} training loss: {loss.item():10.10f}')
-
+    #print("confidence:" + str(confidence))
+    # print("confidence turn:" + str(confidence_turn))
+    # print("confidence:" + str(confidence_speed))
     #validation
     model.eval()
     for inputs, targets in testloader:
@@ -145,11 +169,14 @@ for i in range(epochs):
     print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
     #torch.save(model.state_dict(), network_path + f".epochs{i}")
 
+scores = [train_losses, val_losses, confidence_turn, confidence_speed]
+plot_scores(scores, load_from_file = False, filename = None)
 
-with open('loss_scores', 'wb') as f:
-    pickle.dump([train_losses,val_losses], f)
-torch.save(model.state_dict(), network_path + f".epochs{epochs}")
-print("network saved at " + network_path + f".epochs{epochs}")
+with open('scores', 'wb') as f:
+    pickle.dump([train_losses, val_losses, confidence_turn, confidence_speed], f)
+
+#torch.save(model.state_dict(), network_path + f".epochs{epochs}")
+#print("network saved at " + network_path + f".epochs{epochs}")
 
 
 

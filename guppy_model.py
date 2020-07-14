@@ -166,6 +166,13 @@ class LSTM_multi_modal(nn.Module):
         speed_value = speed_bin_to_value(speed_bin, speed_min, speed_max, num_speed_bins, 0.001)
         return (angle_value, speed_value), (h, c)
 
+    def confidence(self, pred):
+        highest = 0
+        for x in pred:
+            if x > highest:
+                highest = x
+        return highest
+
     def init_hidden(self, batch_size, num_layers, hidden_layer_size):
         ''' Initializes hidden state '''
         weight = next(self.parameters()).data
