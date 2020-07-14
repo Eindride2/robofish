@@ -2,6 +2,18 @@ from math import floor, pi, acos, sqrt
 import random
 from hyper_params import *
 import torch
+import torch.nn as nn
+from torch.distributions.categorical import Categorical
+
+
+def get_prediction_bins(angle_out, speed_out):
+    m = nn.Softmax(0)
+    angle_prob = m(angle_out)
+    speed_prob = m(speed_out)
+
+    angle_bins = Categorical(angle_prob).sample()
+    speed_bins = Categorical(speed_prob).sample()
+    return angle_bins, speed_bins
 
 def value_to_bin(value, min, max, num_bins):
     if value < min:

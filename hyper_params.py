@@ -28,7 +28,7 @@ output_model = "multi_modal"
 #output_model = "fixed"
 num_layers = 2
 hidden_layer_size = 100
-batch_size = 2
+batch_size = 4
 network_path = "saved_networks/guppy_net_{}_{}_hidden{}_layers{}_gbins{}_wbins{}.pth".format("live" if live_data else "sim",
                                                               output_model, hidden_layer_size, num_layers,
                                                                               num_guppy_bins, num_wall_rays)

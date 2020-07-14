@@ -140,6 +140,7 @@ class LSTM_multi_modal(nn.Module):
         # print(speed_prob)
         angle_bin = Categorical(angle_prob).sample()
         speed_bin = Categorical(speed_prob).sample()
+
         # print("angle bin predicted: ", angle_bin)
         # print("speed bin predicted: ", speed_bin)
         angle_value = angle_bin_to_value(angle_bin, angle_min, angle_max, num_angle_bins, 0.001)

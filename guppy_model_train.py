@@ -15,6 +15,7 @@ import sys
 import copy
 from hyper_params import *
 import pickle
+from auxiliary_funcs import get_prediction_bins
 
 torch.manual_seed(1)
 
@@ -58,6 +59,8 @@ val_losses = []
 #confidences = []
 confidence_turn = []
 confidence_speed = []
+accuracy_turn = []
+accuracy_speed = []
 
 for i in range(epochs):
 
@@ -66,9 +69,12 @@ for i in range(epochs):
         states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
         loss = 0
         val_loss = 0
+        acc_turn = 0
+        acc_speed = 0
         confidence = conf1 = conf2 = conf_turn = conf_speed = 0
 
         for inputs, targets in dataloader:
+
             # Creating new variables for the hidden state, otherwise
             # we'd backprop through the entire training history
             model.zero_grad()
@@ -77,21 +83,43 @@ for i in range(epochs):
 
             if output_model == "multi_modal":
                 targets = targets.type(torch.LongTensor)
+
                # angle_pred, speed_pred, h = model.forward(inputs, h)
                 angle_pred, speed_pred, states = model.forward(inputs, states)
-                print(angle_bins)
+                #print(angle_bins)
                 #print(angle_pred.size())
                 #print(speed_pred.size())
 
                 #print(targets.size())
                 angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
                 speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
-                #print(angle_pred.size())
+                angle_bin_pred, speed_bin_pred = get_prediction_bins(angle_pred, speed_pred)
+
                 #print(speed_pred.size())
                 targets = targets.view(targets.shape[0] * targets.shape[1], 2)
                 #print(targets.size())
                 angle_targets = targets[:, 0]
                 speed_targets = targets[:, 1]
+
+                # accuracy - proportion of predictions falling in correct bins
+                #acc_turn += sum(angle_targets == angle_bin_pred) / len(angle_bin_pred)
+                #acc_speed += sum(speed_targets == speed_bin_pred) / len(speed_bin_pred)
+
+                max_angle_bin = angle_targets + 10
+                min_angle_bin = angle_targets - 10
+                max_speed_bin = speed_targets + 10
+                min_speed_bin = speed_targets - 10
+
+                for ind in range(len(angle_bin_pred)):
+
+                    if min_angle_bin[ind] <= angle_bin_pred[ind] <= max_angle_bin[ind]:
+                        acc_turn += 1
+                    if min_speed_bin[ind] <= speed_bin_pred[ind] <= max_speed_bin[ind]:
+                        acc_speed += 1
+
+                acc_turn = acc_turn / len(angle_bin_pred)
+                acc_speed = acc_speed / len(speed_bin_pred)
+
                 # print("------ANGLE SCORES-------")
                 # print(angle_pred)
                 # print("------ANGLE TARGETS -------")
@@ -132,11 +160,17 @@ for i in range(epochs):
     conf_speed = float(conf_speed / (timesteps * dataset.length))
     confidence_turn.append(conf_turn)
     confidence_speed.append(conf_speed)
+    acc_turn = (acc_turn / (dataset.length / batch_size))#.detach().numpy()
+    acc_speed = (acc_speed / (dataset.length / batch_size))#.detach().numpy()
+    accuracy_turn.append(acc_turn)
+    accuracy_speed.append(acc_speed)
     loss = loss / dataset.length
     loss.backward()
     optimizer.step()
     train_losses.append(loss.detach().numpy())
 
+    print(f'epoch: {i:3} accuracy turn: {acc_turn:10.10f}')
+    print(f'epoch: {i:3} accuracy speed: {acc_speed:10.10f}')
     print(f'epoch: {i:3} training loss: {loss.item():10.10f}')
     #print("confidence:" + str(confidence))
     # print("confidence turn:" + str(confidence_turn))
@@ -173,7 +207,8 @@ scores = [train_losses, val_losses, confidence_turn, confidence_speed]
 plot_scores(scores, load_from_file = False, filename = None)
 
 with open('scores', 'wb') as f:
-    pickle.dump([train_losses, val_losses, confidence_turn, confidence_speed], f)
+    pickle.dump([train_losses, val_losses, confidence_turn,
+                 confidence_speed, accuracy_turn, accuracy_speed], f)
 
 #torch.save(model.state_dict(), network_path + f".epochs{epochs}")
 #print("network saved at " + network_path + f".epochs{epochs}")
