@@ -1,8 +1,7 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
-
+from hyper_params import *
 
 def plot_scores(scores, load_from_file, filename):
 
@@ -10,7 +9,7 @@ def plot_scores(scores, load_from_file, filename):
         with open(filename, 'rb') as f:
             scores = pickle.load(f)
 
-    n_epochs = range(np.shape(scores)[1])
+    n_epochs = range(epochs)
     train_loss = scores[0]
     test_loss = scores[1]
     confidence_turn = scores[2]
@@ -35,7 +34,7 @@ def plot_scores(scores, load_from_file, filename):
     plt.plot(n_epochs, accuracy_speed)
     plt.legend(['angular turn', 'linear speed'])
     plt.xlabel('Epochs')
-    plt.ylabel('Accuracy (+- 10 bins)')
+    plt.ylabel('Accuracy')
     plt.show()
 
-plot_scores(scores = None, load_from_file = True, filename = 'scores')
+#plot_scores(scores = None, load_from_file = True, filename = 'scores')

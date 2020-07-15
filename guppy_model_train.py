@@ -71,7 +71,7 @@ for i in range(epochs):
         val_loss = 0
         acc_turn = 0
         acc_speed = 0
-        confidence = conf1 = conf2 = conf_turn = conf_speed = 0
+        conf_turn = conf_speed = 0
 
         for inputs, targets in dataloader:
 
@@ -86,6 +86,7 @@ for i in range(epochs):
 
                # angle_pred, speed_pred, h = model.forward(inputs, h)
                 angle_pred, speed_pred, states = model.forward(inputs, states)
+
                 #print(angle_bins)
                 #print(angle_pred.size())
                 #print(speed_pred.size())
@@ -93,7 +94,8 @@ for i in range(epochs):
                 #print(targets.size())
                 angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
                 speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
-                angle_bin_pred, speed_bin_pred = get_prediction_bins(angle_pred, speed_pred)
+                angle_bin_pred, speed_bin_pred, angle_prob_pred, speed_prob_pred = \
+                    get_prediction_bins(angle_pred, speed_pred)
 
                 #print(speed_pred.size())
                 targets = targets.view(targets.shape[0] * targets.shape[1], 2)
@@ -101,14 +103,16 @@ for i in range(epochs):
                 angle_targets = targets[:, 0]
                 speed_targets = targets[:, 1]
 
-                # accuracy - proportion of predictions falling in correct bins
-                #acc_turn += sum(angle_targets == angle_bin_pred) / len(angle_bin_pred)
-                #acc_speed += sum(speed_targets == speed_bin_pred) / len(speed_bin_pred)
+                conf_turn += np.mean(angle_prob_pred)
+                conf_speed += np.mean(speed_prob_pred)
 
-                max_angle_bin = angle_targets + 10
-                min_angle_bin = angle_targets - 10
-                max_speed_bin = speed_targets + 10
-                min_speed_bin = speed_targets - 10
+                # accuracy - proportion of predictions falling in correct bins
+
+                marginal = 0
+                max_angle_bin = angle_targets + marginal
+                min_angle_bin = angle_targets - marginal
+                max_speed_bin = speed_targets + marginal
+                min_speed_bin = speed_targets - marginal
 
                 for ind in range(len(angle_bin_pred)):
 
@@ -119,6 +123,16 @@ for i in range(epochs):
 
                 acc_turn = acc_turn / len(angle_bin_pred)
                 acc_speed = acc_speed / len(speed_bin_pred)
+
+                with torch.no_grad():
+                    for j in range(100):
+                        angle_probs = nn.Softmax(0)(angle_pred[i])
+                        print(angle_probs[angle_targets[i].data])
+                        print(angle_targets[i])
+
+                loss1 = loss_function(angle_pred, angle_targets)
+                loss2 = loss_function(speed_pred, speed_targets)
+                loss += loss1 + loss2
 
                 # print("------ANGLE SCORES-------")
                 # print(angle_pred)
@@ -131,51 +145,42 @@ for i in range(epochs):
                 #     print("------SPEED TARGETS -------")
                 #     print(speed_targets)
 
-                for x in range(len(angle_pred)):
-                    conf1 += model.confidence(nn.Softmax(0)(angle_pred[x]))
-                    conf2 += model.confidence(nn.Softmax(0)(speed_pred[x]))
-                #confidence = (conf1 + conf2 ) / 2
-                conf_turn += conf1
-                conf_speed += conf2
-                conf1 = conf2 = 0
-
-                loss1 = loss_function(angle_pred, angle_targets)
-                loss2 = loss_function(speed_pred, speed_targets)
-                loss += loss1 + loss2
-
             else:
                 prediction, h = model.forward(inputs, h)
                 loss += loss_function(prediction, targets)
-
-        timesteps = len(angle_pred) / batch_size
 
     except KeyboardInterrupt:
             if input("Do you want to save the model trained so far? y/n") == "y":
                 torch.save(model.state_dict(), network_path + f".epochs{i}")
             sys.exit(0)
 
-    #confidence = float(confidence / (timesteps * dataset.length))
-    # confidences.append(confidence)
-    conf_turn = float(conf_turn / (timesteps * dataset.length))
-    conf_speed = float(conf_speed / (timesteps * dataset.length))
-    confidence_turn.append(conf_turn)
-    confidence_speed.append(conf_speed)
-    acc_turn = (acc_turn / (dataset.length / batch_size))#.detach().numpy()
-    acc_speed = (acc_speed / (dataset.length / batch_size))#.detach().numpy()
-    accuracy_turn.append(acc_turn)
-    accuracy_speed.append(acc_speed)
+    timesteps = len(angle_pred) / batch_size
+
+    if output_model == "multi_modal":
+
+        conf_turn = conf_turn * (batch_size / dataset.length)
+        conf_speed = conf_speed * (batch_size / dataset.length)
+        confidence_turn.append(conf_turn)
+        confidence_speed.append(conf_speed)
+        acc_turn = acc_turn * (batch_size / dataset.length)
+        acc_speed = acc_speed * (batch_size / dataset.length)
+        accuracy_turn.append(acc_turn)
+        accuracy_speed.append(acc_speed)
+
+        print(f'epoch: {i:3} average confidence turn: {conf_turn:10.10f}')
+        print(f'epoch: {i:3} average confidence speed: {conf_speed:10.10f}')
+        print(f'epoch: {i:3} accuracy turn: {acc_turn:10.10f}')
+        print(f'epoch: {i:3} accuracy speed: {acc_speed:10.10f}')
+
     loss = loss / dataset.length
+    train_losses.append(loss.detach().numpy())
     loss.backward()
     optimizer.step()
-    train_losses.append(loss.detach().numpy())
-
-    print(f'epoch: {i:3} accuracy turn: {acc_turn:10.10f}')
-    print(f'epoch: {i:3} accuracy speed: {acc_speed:10.10f}')
     print(f'epoch: {i:3} training loss: {loss.item():10.10f}')
-    #print("confidence:" + str(confidence))
-    # print("confidence turn:" + str(confidence_turn))
-    # print("confidence:" + str(confidence_speed))
-    #validation
+
+
+########validation#######
+
     model.eval()
     for inputs, targets in testloader:
 
@@ -203,15 +208,18 @@ for i in range(epochs):
     print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
     #torch.save(model.state_dict(), network_path + f".epochs{i}")
 
-scores = [train_losses, val_losses, confidence_turn, confidence_speed]
+scores = [train_losses, val_losses, confidence_turn, confidence_speed, accuracy_turn, accuracy_speed]
+
+torch.save(model.state_dict(), network_path)
+print("network saved at " + network_path + f".epochs{epochs}")
+with open('scores', 'wb') as f:
+    pickle.dump(scores, f)
+
 plot_scores(scores, load_from_file = False, filename = None)
 
-with open('scores', 'wb') as f:
-    pickle.dump([train_losses, val_losses, confidence_turn,
-                 confidence_speed, accuracy_turn, accuracy_speed], f)
 
-#torch.save(model.state_dict(), network_path + f".epochs{epochs}")
-#print("network saved at " + network_path + f".epochs{epochs}")
+
+
 
 
 

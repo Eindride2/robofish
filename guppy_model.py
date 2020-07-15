@@ -98,7 +98,6 @@ class LSTM_multi_modal(nn.Module):
                 )
             )
 
-
         # don't need this here but maybe later
         # dis_out = (layer_results[-1][0] + 1.0) / 2.0
 
@@ -159,8 +158,6 @@ class LSTM_multi_modal(nn.Module):
         m = nn.Softmax(0)
         angle_prob = m(angle_out)
         speed_prob = m(speed_out)
-        print(angle_prob)
-        print(speed_prob)
         angle_bin = Categorical(angle_prob).sample()
         speed_bin = Categorical(speed_prob).sample()
         angle_value = angle_bin_to_value(angle_bin, angle_min, angle_max, num_angle_bins, 0.001)
