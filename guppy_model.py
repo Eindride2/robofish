@@ -180,4 +180,3 @@ class LSTM_multi_modal(nn.Module):
     def simulate(self, initial_pose, initial_loc_sensory, frames):
         pass
 
-        # for i in range(frames):
