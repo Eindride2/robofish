@@ -39,7 +39,7 @@ with torch.no_grad():
             angle_targets = targets[:, 0]
             speed_targets = targets[:, 1]
             angle_pred, speed_pred,_ = model.forward(input)
-            predictions.append(output)
+            #predictions.append(output)
             loss1 = loss_function(angle_pred, angle_targets)
             loss2 = loss_function(speed_pred, speed_targets)
             loss += loss1 + loss2

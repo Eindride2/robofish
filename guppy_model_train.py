@@ -21,17 +21,17 @@ torch.manual_seed(1)
 
 # get the files for 4, 6 and 8 guppys
 trainpath = "guppy_data/live_female_female/train/" if live_data else "guppy_data/couzin_torus/train/"
-testpath = "guppy_data/live_female_female/test/" if live_data else "guppy_data/couzin_torus/test/"
+valpath = "guppy_data/live_female_female/validation/" if live_data else "guppy_data/couzin_torus/validation/"
 files = [join(trainpath, f) for f in listdir(trainpath) if isfile(join(trainpath, f)) and f.endswith(".hdf5") ]
-test_files = [join(testpath, f) for f in listdir(testpath) if isfile(join(testpath, f)) and f.endswith(".hdf5") ]
+val_files = [join(valpath, f) for f in listdir(valpath) if isfile(join(valpath, f)) and f.endswith(".hdf5") ]
 files.sort()
-test_files.sort
+val_files.sort
 num_files = len(files)
 files = files[97:] #all files with > 1 fish
-test_files = test_files[10:] #ditto
+val_files = val_files[13:] #ditto
 
 files = files[0:1]
-test_files = test_files[0:1]
+val_files = val_files[0:1]
 
 torch.set_default_dtype(torch.float64)
 
@@ -51,8 +51,8 @@ print(model)
 
 dataset = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
 dataloader = DataLoader(dataset, batch_size=batch_size, drop_last=True, shuffle=True)
-testdata = Guppy_Dataset(test_files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
-testloader = DataLoader(testdata, batch_size=batch_size, drop_last=True, shuffle=True)
+valdata = Guppy_Dataset(val_files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
+valloader = DataLoader(valdata, batch_size=batch_size, drop_last=True, shuffle=True)
 
 train_losses = []
 val_losses = []
@@ -67,7 +67,7 @@ for i in range(epochs):
     try:
         h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
         states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
-        loss = 0
+        loss_score = 0
         val_loss = 0
         acc_turn = 0
         acc_speed = 0
@@ -124,15 +124,13 @@ for i in range(epochs):
                 acc_turn = acc_turn / len(angle_bin_pred)
                 acc_speed = acc_speed / len(speed_bin_pred)
 
-                with torch.no_grad():
-                    for j in range(100):
-                        angle_probs = nn.Softmax(0)(angle_pred[i])
-                        print(angle_probs[angle_targets[i].data])
-                        print(angle_targets[i])
-
                 loss1 = loss_function(angle_pred, angle_targets)
                 loss2 = loss_function(speed_pred, speed_targets)
-                loss += loss1 + loss2
+                loss = loss1 + loss2
+                loss_score += loss1 + loss2
+
+                loss.backward()
+                optimizer.step()
 
                 # print("------ANGLE SCORES-------")
                 # print(angle_pred)
@@ -147,7 +145,7 @@ for i in range(epochs):
 
             else:
                 prediction, h = model.forward(inputs, h)
-                loss += loss_function(prediction, targets)
+                loss = loss_function(prediction, targets)
 
     except KeyboardInterrupt:
             if input("Do you want to save the model trained so far? y/n") == "y":
@@ -172,17 +170,15 @@ for i in range(epochs):
         print(f'epoch: {i:3} accuracy turn: {acc_turn:10.10f}')
         print(f'epoch: {i:3} accuracy speed: {acc_speed:10.10f}')
 
-    loss = loss / dataset.length
-    train_losses.append(loss.detach().numpy())
-    loss.backward()
-    optimizer.step()
-    print(f'epoch: {i:3} training loss: {loss.item():10.10f}')
+    loss_score = loss_score / dataset.length
+    train_losses.append(loss_score.detach().numpy())
+    print(f'epoch: {i:3} training loss: {loss_score.item():10.10f}')
 
 
 ########validation#######
 
     model.eval()
-    for inputs, targets in testloader:
+    for inputs, targets in valloader:
 
         if output_model == "multi_modal":
 
@@ -203,7 +199,7 @@ for i in range(epochs):
             prediction,_ = model.forward(inputs, h)
             val_loss += loss_function(prediction, targets)
 
-    val_loss = val_loss / testdata.length
+    val_loss = val_loss / valdata.length
     val_losses.append(val_loss.detach().numpy())
     print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
     #torch.save(model.state_dict(), network_path + f".epochs{i}")
