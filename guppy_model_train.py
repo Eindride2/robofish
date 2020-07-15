@@ -75,8 +75,7 @@ for i in range(epochs):
 
         for inputs, targets in dataloader:
 
-            # Creating new variables for the hidden state, otherwise
-            # we'd backprop through the entire training history
+
             model.zero_grad()
             #h = tuple([each.data for each in h])
             states = [tuple([each.data for each in s]) for s in states]
