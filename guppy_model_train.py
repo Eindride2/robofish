@@ -25,13 +25,13 @@ valpath = "guppy_data/live_female_female/validation/" if live_data else "guppy_d
 files = [join(trainpath, f) for f in listdir(trainpath) if isfile(join(trainpath, f)) and f.endswith(".hdf5") ]
 val_files = [join(valpath, f) for f in listdir(valpath) if isfile(join(valpath, f)) and f.endswith(".hdf5") ]
 files.sort()
-val_files.sort
+val_files.sort()
 num_files = len(files)
-files = files[97:] #all files with > 1 fish
-val_files = val_files[13:] #ditto
 
-files = files[0:1]
-val_files = val_files[0:1]
+#files = files[97:] #all files with > 1 fish
+#val_files = val_files[13:] #ditto
+#files = files[0:1]
+#val_files = val_files[0:1]
 
 torch.set_default_dtype(torch.float64)
 
