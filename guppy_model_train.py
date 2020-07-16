@@ -15,6 +15,7 @@ import copy
 from hyper_params import *
 from evaluate_performance import plot_scores
 from auxiliary_funcs import get_prediction_bins
+import pickle
 
 torch.manual_seed(1)
 
