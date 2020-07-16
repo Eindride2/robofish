@@ -63,24 +63,20 @@ epochs = 30
 seq_len = 20
 
 for i in range(epochs):
+
     try:
-        # states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
-        # h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
-        # loss = 0
+        loss_score = 0  # only for storing loss, not for updating
+        val_loss = 0
+        acc_turn = 0
+        acc_speed = 0
+        conf_turn = conf_speed = 0
+
         for inputs, targets in dataloader:
-
-            h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
-            states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
-            loss_score = 0
-            val_loss = 0
-            acc_turn = 0
-            acc_speed = 0
-            conf_turn = conf_speed = 0
-
-            # Creating new variables for the hidden state, otherwise
-            # we'd backprop through the entire training history
-            optimizer.zero_grad()
+            #h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
+            #states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
             # states = [tuple([each.data for each in s]) for s in states]
+
+            optimizer.zero_grad()
             states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in
                       range(num_layers * 2)] if arch == "ey" \
                 else model.init_hidden(batch_size, num_layers, hidden_layer_size)
@@ -174,10 +170,10 @@ for i in range(epochs):
             print(f'epoch: {i:3} accuracy speed: {acc_speed:10.10f}')
 
         loss_score = loss_score / dataset.length
-        train_losses.append(loss_score.detach().numpy())
+        train_losses.append(loss_score)
 
         print("###################################")
-        print(f'epoch: {i:3} training loss: {loss_score.item():10.10f}')
+        print(f'epoch: {i:3} training loss: {loss_score:10.10f}')
         print("###################################")
         # torch.nn.utils.clip_grad_norm_(model.parameters(), 0.25)
         # loss.backward()
@@ -223,7 +219,7 @@ for i in range(epochs):
                 val_loss += loss_function(prediction, targets[:, s: s + seq_len, :])
 
     val_loss = val_loss / valdata.length
-    val_losses.append(val_loss.detach().numpy())
+    val_losses.append(val_loss)
     print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
     # torch.save(model.state_dict(), network_path + f".epochs{i}")
 

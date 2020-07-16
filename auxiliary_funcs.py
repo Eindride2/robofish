@@ -12,15 +12,15 @@ def get_prediction_bins(angle_out, speed_out):
     m = nn.Softmax(dim = 1)
     angle_probs = m(angle_out)
     speed_probs = m(speed_out)
+
     angle_bins = Categorical(angle_probs).sample().detach().numpy()
     speed_bins = Categorical(speed_probs).sample().detach().numpy()
 
-    angle_prob_prediction = angle_probs[angle_bins].detach().numpy()
-    speed_prob_prediction = speed_probs[speed_bins].detach().numpy()
+    angle_prob_prediction = angle_probs[:,angle_bins].detach().numpy()
+    speed_prob_prediction = speed_probs[:,speed_bins].detach().numpy()
 
 
-    return angle_bins, speed_bins, angle_prob_prediction, speed_prob_prediction #,\
-           #max_prob_prediction , min_pro_prediction
+    return angle_bins, speed_bins, angle_prob_prediction, speed_prob_prediction
 
 def value_to_bin(value, min, max, num_bins):
     if value < min:
