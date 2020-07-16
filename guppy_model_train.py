@@ -178,8 +178,56 @@ for i in range(epochs):
             print("network saved at " + network_path + f".epochs{i}")
         sys.exit(0)
 
+        ########validation#######
 
+        model.eval()
+        for inputs, targets in valloader:
 
-torch.save(model.state_dict(), network_path + f".epochs{epochs}")
-print("network saved at " + network_path + f".epochs{epochs}")
+            if output_model == "multi_modal":
+                targets = targets.type(torch.LongTensor)
+
+                for s in range(0, inputs.size()[1] - seq_len, seq_len):
+                    states = [tuple([each.data for each in s]) for s in states] if arch == "ey" else \
+                        tuple([each.data for each in states])
+                    angle_pred, speed_pred, _ = model.forward(inputs[:, s:s + seq_len, :], states)
+
+                    # angle_pred, speed_pred, states = model.forward(inputs[:, s:s + seq_len, :], states)
+                    angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
+                    speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
+                    seq_targets = targets[:, s: s + seq_len, :]
+                    seq_targets = seq_targets.contiguous().view(seq_targets.shape[0] * seq_targets.shape[1], -1)
+                    angle_targets = seq_targets[:, 0]
+                    speed_targets = seq_targets[:, 1]
+
+                    loss1 = loss_function(angle_pred, angle_targets)
+                    loss2 = loss_function(speed_pred, speed_targets)
+                    val_loss += loss1 + loss2
+
+            else:
+                for s in range(0, inputs.size()[1], seq_len):
+                    # states = [tuple([each.data for each in s]) for s in states] if arch == "ey" else \
+                    #    tuple([each.data for each in states])
+                    prediction, _ = model.forward(inputs[:, s:s + seq_len, :], states)
+
+                    val_loss += loss_function(prediction, targets[:, s: s + seq_len, :])
+
+        val_loss = val_loss / valdata.length
+        val_losses.append(val_loss)
+        print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
+        # torch.save(model.state_dict(), network_path + f".epochs{i}")
+
+# summarizing and plotting data
+
+if output_model == "multi_modal":
+    scores = [train_losses, val_losses, confidence_turn, confidence_speed, accuracy_turn, accuracy_speed]
+else:
+    scores = [train_losses, val_losses]
+
+with open('scores', 'wb') as f:
+    pickle.dump(scores, f)
+
+plot_scores(scores, load_from_file=False, filename=None)
+
+#torch.save(model.state_dict(), network_path + f".epochs{epochs}")
+#print("network saved at " + network_path + f".epochs{epochs}")
 
