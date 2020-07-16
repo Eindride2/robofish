@@ -26,6 +26,9 @@ files.sort()
 val_files.sort()
 num_files = len(files)
 
+files = files[0:1]
+val_files = val_files[0:1]
+
 # now we use a regression model, just predict the absolute values of linear speed and angular turn
 # so we need squared_error loss
 
@@ -39,13 +42,13 @@ else:
 torch.manual_seed(1)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.00005)
 torch.set_default_dtype(torch.float64)
-
 print(model)
+
 # training
 
-dataset = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
+dataset = Guppy_Dataset(files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model,max_agents = 1)
 dataloader = DataLoader(dataset, batch_size=batch_size, drop_last=True, shuffle=True)
-valdata = Guppy_Dataset(val_files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model)
+valdata = Guppy_Dataset(val_files, 0, num_guppy_bins, num_wall_rays, livedata=live_data, output_model=output_model, max_agents =1)
 valloader = DataLoader(valdata, batch_size=batch_size, drop_last=True, shuffle=True)
 
 train_losses = []
@@ -85,6 +88,7 @@ for i in range(epochs):
             if output_model == "multi_modal":
                 targets = targets.type(torch.LongTensor)
                 # loss = 0
+
                 for s in range(0, inputs.size()[1] - seq_len, seq_len):
                     states = [tuple([each.data for each in s]) for s in states] if arch == "ey" else \
                         tuple([each.data for each in states])
@@ -154,8 +158,6 @@ for i in range(epochs):
             loss.backward()
             optimizer.step()
 
-        timesteps = len(angle_pred) / batch_size
-
         if output_model == "multi_modal":
             conf_turn = conf_turn * (batch_size / dataset.length)
             conf_speed = conf_speed * (batch_size / dataset.length)
@@ -193,7 +195,6 @@ for i in range(epochs):
     for inputs, targets in valloader:
 
         if output_model == "multi_modal":
-
             targets = targets.type(torch.LongTensor)
 
             for s in range(0, inputs.size()[1] - seq_len, seq_len):
@@ -225,6 +226,9 @@ for i in range(epochs):
     val_losses.append(val_loss.detach().numpy())
     print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
     # torch.save(model.state_dict(), network_path + f".epochs{i}")
+
+
+# summarizing and plotting data
 
 if output_model == "multi_modal":
     scores = [train_losses, val_losses, confidence_turn, confidence_speed, accuracy_turn, accuracy_speed]
