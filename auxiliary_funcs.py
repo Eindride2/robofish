@@ -46,6 +46,8 @@ def angle_bin_to_value(bin, min, max, num_bins, precision):
     num_prec_steps = floor((rge[1] - rge[0]) / precision)
     return rge[0] + precision * random.randint(0, num_prec_steps)
 
+print(angle_bin_to_value(82, angle_min, angle_max, num_angle_bins, 0.000001))
+print(value_to_bin(-0.032, angle_min, angle_max, num_angle_bins))
 def speed_bin_to_value(bin, min, max, num_bins, precision):
     if bin == 0:
         rge = (torch.tensor([min]) - 0.2, min)
@@ -58,8 +60,8 @@ def speed_bin_to_value(bin, min, max, num_bins, precision):
         rge = (minim, minim + step)
     num_prec_steps = floor((rge[1] - rge[0]) / precision)
     return rge[0] + precision * random.randint(0, num_prec_steps)
-print(speed_bin_to_value(0, -0.8, 2.8, 80, 0.001))
 
+print(angle_bin_to_value(25, speed_min, speed_max, num_speed_bins, 0.001))
 def vec_to_angle(x, y):
     if y >= 0:
         return acos(x)

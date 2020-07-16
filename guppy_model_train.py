@@ -17,23 +17,14 @@ from hyper_params import *
 import pickle
 from auxiliary_funcs import get_prediction_bins
 
-torch.manual_seed(1)
-
 # get the files for 4, 6 and 8 guppys
 trainpath = "guppy_data/live_female_female/train/" if live_data else "guppy_data/couzin_torus/train/"
 valpath = "guppy_data/live_female_female/validation/" if live_data else "guppy_data/couzin_torus/validation/"
-files = [join(trainpath, f) for f in listdir(trainpath) if isfile(join(trainpath, f)) and f.endswith(".hdf5") ]
-val_files = [join(valpath, f) for f in listdir(valpath) if isfile(join(valpath, f)) and f.endswith(".hdf5") ]
+files = [join(trainpath, f) for f in listdir(trainpath) if isfile(join(trainpath, f)) and f.endswith(".hdf5")]
+val_files = [join(valpath, f) for f in listdir(valpath) if isfile(join(valpath, f)) and f.endswith(".hdf5")]
 files.sort()
 val_files.sort()
 num_files = len(files)
-
-#files = files[97:] #all files with > 1 fish
-#val_files = val_files[13:] #ditto
-#files = files[0:1]
-#val_files = val_files[0:1]
-
-torch.set_default_dtype(torch.float64)
 
 # now we use a regression model, just predict the absolute values of linear speed and angular turn
 # so we need squared_error loss
@@ -45,7 +36,10 @@ else:
     model = LSTM_fixed()
     loss_function = nn.MSELoss()
 
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+torch.manual_seed(1)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.00005)
+torch.set_default_dtype(torch.float64)
+
 print(model)
 # training
 
@@ -56,125 +50,144 @@ valloader = DataLoader(valdata, batch_size=batch_size, drop_last=True, shuffle=T
 
 train_losses = []
 val_losses = []
-#confidences = []
+# confidences = []
 confidence_turn = []
 confidence_speed = []
 accuracy_turn = []
 accuracy_speed = []
 
+epochs = 30
+seq_len = 20
+
 for i in range(epochs):
-
     try:
-        h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
-        states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
-        loss_score = 0
-        val_loss = 0
-        acc_turn = 0
-        acc_speed = 0
-        conf_turn = conf_speed = 0
-
+        # states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
+        # h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
+        # loss = 0
         for inputs, targets in dataloader:
 
+            h = model.init_hidden(batch_size, num_layers, hidden_layer_size)
+            states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in range(num_layers * 2)]
+            loss_score = 0
+            val_loss = 0
+            acc_turn = 0
+            acc_speed = 0
+            conf_turn = conf_speed = 0
 
-            model.zero_grad()
-            #h = tuple([each.data for each in h])
-            states = [tuple([each.data for each in s]) for s in states]
+            # Creating new variables for the hidden state, otherwise
+            # we'd backprop through the entire training history
+            optimizer.zero_grad()
+            # states = [tuple([each.data for each in s]) for s in states]
+            states = [model.init_hidden(batch_size, 1, hidden_layer_size) for _ in
+                      range(num_layers * 2)] if arch == "ey" \
+                else model.init_hidden(batch_size, num_layers, hidden_layer_size)
 
             if output_model == "multi_modal":
                 targets = targets.type(torch.LongTensor)
+                # loss = 0
+                for s in range(0, inputs.size()[1] - seq_len, seq_len):
+                    states = [tuple([each.data for each in s]) for s in states] if arch == "ey" else \
+                        tuple([each.data for each in states])
+                    angle_pred, speed_pred, states = model.forward(inputs[:, s:s + seq_len, :], states)
 
-               # angle_pred, speed_pred, h = model.forward(inputs, h)
-                angle_pred, speed_pred, states = model.forward(inputs, states)
+                    # angle_pred, speed_pred, states = model.forward(inputs[:, s:s + seq_len, :], states)
+                    angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
+                    speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
+                    seq_targets = targets[:, s: s + seq_len, :]
+                    seq_targets = seq_targets.contiguous().view(seq_targets.shape[0] * seq_targets.shape[1], -1)
+                    angle_targets = seq_targets[:, 0]
+                    speed_targets = seq_targets[:, 1]
 
-                #print(angle_bins)
-                #print(angle_pred.size())
-                #print(speed_pred.size())
+                    # scores
 
-                #print(targets.size())
-                angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
-                speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
-                angle_bin_pred, speed_bin_pred, angle_prob_pred, speed_prob_pred = \
-                    get_prediction_bins(angle_pred, speed_pred)
+                    angle_bin_pred, speed_bin_pred, angle_prob_pred, speed_prob_pred = \
+                        get_prediction_bins(angle_pred, speed_pred)
 
-                #print(speed_pred.size())
-                targets = targets.view(targets.shape[0] * targets.shape[1], 2)
-                #print(targets.size())
-                angle_targets = targets[:, 0]
-                speed_targets = targets[:, 1]
+                    conf_turn += np.mean(angle_prob_pred)
+                    conf_speed += np.mean(speed_prob_pred)
 
-                conf_turn += np.mean(angle_prob_pred)
-                conf_speed += np.mean(speed_prob_pred)
+                    # accuracy - proportion of predictions falling in correct bins
 
-                # accuracy - proportion of predictions falling in correct bins
+                    marginal = 0
+                    max_angle_bin = angle_targets + marginal
+                    min_angle_bin = angle_targets - marginal
+                    max_speed_bin = speed_targets + marginal
+                    min_speed_bin = speed_targets - marginal
 
-                marginal = 0
-                max_angle_bin = angle_targets + marginal
-                min_angle_bin = angle_targets - marginal
-                max_speed_bin = speed_targets + marginal
-                min_speed_bin = speed_targets - marginal
+                    for ind in range(len(angle_bin_pred)):
 
-                for ind in range(len(angle_bin_pred)):
+                        if min_angle_bin[ind] <= angle_bin_pred[ind] <= max_angle_bin[ind]:
+                            acc_turn += 1
+                        if min_speed_bin[ind] <= speed_bin_pred[ind] <= max_speed_bin[ind]:
+                            acc_speed += 1
 
-                    if min_angle_bin[ind] <= angle_bin_pred[ind] <= max_angle_bin[ind]:
-                        acc_turn += 1
-                    if min_speed_bin[ind] <= speed_bin_pred[ind] <= max_speed_bin[ind]:
-                        acc_speed += 1
+                    acc_turn = acc_turn / len(angle_bin_pred)
+                    acc_speed = acc_speed / len(speed_bin_pred)
 
-                acc_turn = acc_turn / len(angle_bin_pred)
-                acc_speed = acc_speed / len(speed_bin_pred)
+                    loss1 = loss_function(angle_pred, angle_targets)
+                    loss2 = loss_function(speed_pred, speed_targets)
+                    loss_score += loss1 + loss2
 
-                loss1 = loss_function(angle_pred, angle_targets)
-                loss2 = loss_function(speed_pred, speed_targets)
-                loss = loss1 + loss2
-                loss_score += loss1 + loss2
+                    loss = loss1 + loss2
 
-                loss.backward()
-                optimizer.step()
-
-                # print("------ANGLE SCORES-------")
-                # print(angle_pred)
-                # print("------ANGLE TARGETS -------")
-                # print(angle_targets)
-                # with torch.no_grad():
-                # print("------SPEED PROBS-------")
-                # with torch.no_grad():
-                #     print(nn.Softmax(0)(speed_pred[0]))
-                #     print("------SPEED TARGETS -------")
-                #     print(speed_targets)
+                    torch.set_printoptions(threshold=10000)
+                    with torch.no_grad():
+                        for j in range(1):
+                            angle_probs = nn.Softmax(0)(angle_pred[j])
+                            speed_probs = nn.Softmax(0)(speed_pred[j])
+                            print("angle prob:\n", angle_probs[angle_targets[j].data])
+                            print(angle_targets[i])
+                    # loss /= inputs.shape[1] // seq_len
 
             else:
-                prediction, h = model.forward(inputs, h)
-                loss = loss_function(prediction, targets)
+                # loss = 0
+                for s in range(0, inputs.size()[1], seq_len):
+                    # states = [tuple([each.data for each in s]) for s in states] if arch == "ey" else \
+                    #    tuple([each.data for each in states])
+                    prediction, states = model.forward(inputs[:, s:s + seq_len, :], states)
+
+                    loss_score += loss_function(prediction, targets[:, s: s + seq_len, :])
+                    loss = loss_function(prediction, targets[:, s: s + seq_len, :])
+
+                # loss /= inputs.shape[1] // seq_len
+
+            loss.backward()
+            optimizer.step()
+
+        timesteps = len(angle_pred) / batch_size
+
+        if output_model == "multi_modal":
+            conf_turn = conf_turn * (batch_size / dataset.length)
+            conf_speed = conf_speed * (batch_size / dataset.length)
+            confidence_turn.append(conf_turn)
+            confidence_speed.append(conf_speed)
+            acc_turn = acc_turn * (batch_size / dataset.length)
+            acc_speed = acc_speed * (batch_size / dataset.length)
+            accuracy_turn.append(acc_turn)
+            accuracy_speed.append(acc_speed)
+
+            print(f'epoch: {i:3} average confidence turn: {conf_turn:10.10f}')
+            print(f'epoch: {i:3} average confidence speed: {conf_speed:10.10f}')
+            print(f'epoch: {i:3} accuracy turn: {acc_turn:10.10f}')
+            print(f'epoch: {i:3} accuracy speed: {acc_speed:10.10f}')
+
+        loss_score = loss_score / dataset.length
+        train_losses.append(loss_score.detach().numpy())
+
+        print("###################################")
+        print(f'epoch: {i:3} training loss: {loss_score.item():10.10f}')
+        print("###################################")
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), 0.25)
+        # loss.backward()
+        # optimizer.step()
 
     except KeyboardInterrupt:
-            if input("Do you want to save the model trained so far? y/n") == "y":
-                torch.save(model.state_dict(), network_path + f".epochs{i}")
-            sys.exit(0)
+        if input("Do you want to save the model trained so far? y/n") == "y":
+            torch.save(model.state_dict(), network_path + f".epochs{i}")
+            print("network saved at " + network_path + f".epochs{i}")
+        sys.exit(0)
 
-    timesteps = len(angle_pred) / batch_size
-
-    if output_model == "multi_modal":
-
-        conf_turn = conf_turn * (batch_size / dataset.length)
-        conf_speed = conf_speed * (batch_size / dataset.length)
-        confidence_turn.append(conf_turn)
-        confidence_speed.append(conf_speed)
-        acc_turn = acc_turn * (batch_size / dataset.length)
-        acc_speed = acc_speed * (batch_size / dataset.length)
-        accuracy_turn.append(acc_turn)
-        accuracy_speed.append(acc_speed)
-
-        print(f'epoch: {i:3} average confidence turn: {conf_turn:10.10f}')
-        print(f'epoch: {i:3} average confidence speed: {conf_speed:10.10f}')
-        print(f'epoch: {i:3} accuracy turn: {acc_turn:10.10f}')
-        print(f'epoch: {i:3} accuracy speed: {acc_speed:10.10f}')
-
-    loss_score = loss_score / dataset.length
-    train_losses.append(loss_score.detach().numpy())
-    print(f'epoch: {i:3} training loss: {loss_score.item():10.10f}')
-
-
-########validation#######
+    ########validation#######
 
     model.eval()
     for inputs, targets in valloader:
@@ -182,39 +195,46 @@ for i in range(epochs):
         if output_model == "multi_modal":
 
             targets = targets.type(torch.LongTensor)
-            angle_pred, speed_pred,_ = model.forward(inputs,states)
 
-            angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
-            speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
-            targets = targets.view(targets.shape[0] * targets.shape[1], 2)
-            angle_targets = targets[:, 0]
-            speed_targets = targets[:, 1]
+            for s in range(0, inputs.size()[1] - seq_len, seq_len):
+                states = [tuple([each.data for each in s]) for s in states] if arch == "ey" else \
+                    tuple([each.data for each in states])
+                angle_pred, speed_pred, _ = model.forward(inputs[:, s:s + seq_len, :], states)
 
-            loss1 = loss_function(angle_pred, angle_targets)
-            loss2 = loss_function(speed_pred, speed_targets)
-            val_loss += loss1 + loss2
+                # angle_pred, speed_pred, states = model.forward(inputs[:, s:s + seq_len, :], states)
+                angle_pred = angle_pred.view(angle_pred.shape[0] * angle_pred.shape[1], -1)
+                speed_pred = speed_pred.view(speed_pred.shape[0] * speed_pred.shape[1], -1)
+                seq_targets = targets[:, s: s + seq_len, :]
+                seq_targets = seq_targets.contiguous().view(seq_targets.shape[0] * seq_targets.shape[1], -1)
+                angle_targets = seq_targets[:, 0]
+                speed_targets = seq_targets[:, 1]
+
+                loss1 = loss_function(angle_pred, angle_targets)
+                loss2 = loss_function(speed_pred, speed_targets)
+                val_loss += loss1 + loss2
 
         else:
-            prediction,_ = model.forward(inputs, h)
-            val_loss += loss_function(prediction, targets)
+            for s in range(0, inputs.size()[1], seq_len):
+                # states = [tuple([each.data for each in s]) for s in states] if arch == "ey" else \
+                #    tuple([each.data for each in states])
+                prediction, _ = model.forward(inputs[:, s:s + seq_len, :], states)
+
+                val_loss += loss_function(prediction, targets[:, s: s + seq_len, :])
 
     val_loss = val_loss / valdata.length
     val_losses.append(val_loss.detach().numpy())
     print(f'epoch: {i:3} validation loss: {val_loss:10.10f}')
-    #torch.save(model.state_dict(), network_path + f".epochs{i}")
+    # torch.save(model.state_dict(), network_path + f".epochs{i}")
 
-scores = [train_losses, val_losses, confidence_turn, confidence_speed, accuracy_turn, accuracy_speed]
+if output_model == "multi_modal":
+    scores = [train_losses, val_losses, confidence_turn, confidence_speed, accuracy_turn, accuracy_speed]
+else:
+    scores = [train_losses, val_losses]
 
-torch.save(model.state_dict(), network_path)
+torch.save(model.state_dict(), network_path + f".epochs{epochs}")
 print("network saved at " + network_path + f".epochs{epochs}")
+
 with open('scores', 'wb') as f:
     pickle.dump(scores, f)
 
-plot_scores(scores, load_from_file = False, filename = None)
-
-
-
-
-
-
-
+plot_scores(scores, load_from_file=False, filename=None)
